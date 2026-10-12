@@ -237,3 +237,243 @@ void printNextMatrix(void)
     printf("\nNext-hop (route) matrix: entry = number of the first city to\n"
            "visit after the source on the cheapest route ('-' = no route)\n");
     printLine(14 + 6 * n);
+printf("%-14s", "From \\ To");
+    for (j = 0; j < n; j++) printf("%6d", j + 1);
+    printf("\n");
+    printLine(14 + 6 * n);
+    for (i = 0; i < n; i++) {
+        printf("%2d.%-11.10s", i + 1, city[i]);
+        for (j = 0; j < n; j++) {
+            if (nxt[i][j] == -1) printf("%6s", "-");
+            else                 printf("%6d", nxt[i][j] + 1);
+        }
+        printf("\n");
+    }
+    printLine(14 + 6 * n);
+}
+
+/* Counts direct roads (and negative ones) in the input matrix. */
+int countRoads(int *negRoads)
+{
+    int i, j, edges = 0, neg = 0;
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            if (i != j && cost[i][j] < INF) {
+                edges++;
+                if (cost[i][j] < 0) neg++;
+            }
+    if (negRoads) *negRoads = neg;
+    return edges;
+}
+
+void showNetwork(void)
+{
+    int neg, edges = countRoads(&neg);
+    printCities();
+    printMatrix(cost, "Input cost matrix D(0):", NULL);
+    printf("Direct roads: %d (negative: %d). Roads are one-way: row city -> column city.\n",
+           edges, neg);
+}
+
+/* ---------------------------- data entry -------------------------------- */
+
+void resetResults(void)
+{
+    if (processed)
+        printf("  (Previous results cleared. Run the algorithm again.)\n");
+    processed   = 0;
+    hasNegCycle = 0;
+    updates     = 0;
+    relaxTests  = 0;
+}
+
+void readGraph(void)
+{
+    char buf[LINE_LEN], *tok, prompt[64];
+    long long row[MAX];
+    int i, j, count, ok;
+
+    n = 0;
+    count = readInt("\nEnter number of cities (1-20): ", 1, MAX);
+    for (i = 0; i < count; i++) {
+        snprintf(prompt, sizeof prompt, "  Name of city %d: ", i + 1);
+        readCityName(prompt, city[i], -1);
+        n = i + 1;                    /* so duplicate check sees this city */
+    }
+
+    printf("\nEnter the cost matrix row by row (%d values per row, space separated).\n", n);
+    printf("Use INF, x or - for 'no direct road'. Negative costs (adjustments) are allowed.\n");
+    printf("Diagonal (city to itself) is always taken as 0.\n");
+
+    for (i = 0; i < n; i++) {
+        while (1) {
+            printf("  From %-12s: ", city[i]);
+            readLine(buf, sizeof buf);
+            count = 0;
+            ok = 1;
+            for (tok = strtok(buf, " \t,"); tok != NULL; tok = strtok(NULL, " \t,")) {
+                if (count >= n || !parseCost(tok, &row[count])) { ok = 0; break; }
+                count++;
+            }
+            if (!ok || count != n) {
+                printf("  Invalid row. Enter exactly %d values (integers within +/-%d or INF).\n",
+                       n, COST_LIMIT);
+                continue;
+            }
+            break;
+        }
+        for (j = 0; j < n; j++) cost[i][j] = row[j];
+        if (cost[i][i] != 0)
+            printf("  Note: diagonal value for %s set to 0.\n", city[i]);
+        cost[i][i] = 0;
+    }
+
+    dataLoaded = 1;
+    resetResults();
+    printf("\nGraph stored successfully.\n");
+}
+
+/* Fills cost matrix with INF and 0 diagonal. */
+void clearCost(void)
+{
+    int i, j;
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            cost[i][j] = (i == j) ? 0 : INF;
+}
+
+void setNames(const char *names[], int count)
+{
+    int i;
+    n = count;
+    for (i = 0; i < n; i++) {
+        strncpy(city[i], names[i], NAME_LEN - 1);
+        city[i][NAME_LEN - 1] = '\0';
+    }
+    clearCost();
+}
+
+void loadSample(void)
+{
+    int c;
+    printf("\nSample datasets:\n");
+    printf("  1. Maharashtra/Goa road network (positive costs)\n");
+    printf("  2. Network with negative adjustments, no negative cycle (CLRS example)\n");
+    printf("  3. Network containing a negative cycle (and unreachable cities)\n");
+    c = readInt("Choose sample (1-3): ", 1, 3);
+
+    if (c == 1) {
+        const char *names[] = {"Mumbai", "Pune", "Nashik", "Nagpur", "Goa"};
+        setNames(names, 5);
+        cost[0][1] = 150; cost[0][2] = 170; cost[0][4] = 590;  /* Mumbai */
+        cost[1][0] = 150; cost[1][2] = 210; cost[1][3] = 700;  /* Pune   */
+        cost[1][4] = 450;
+        cost[2][0] = 170; cost[2][3] = 450;                    /* Nashik */
+        cost[3][0] = 800;                                      /* Nagpur */
+        cost[4][0] = 590; cost[4][1] = 450;                    /* Goa    */
+    } else if (c == 2) {
+        const char *names[] = {"Surat", "Vadodara", "Ahmedabad", "Rajkot", "Bhuj"};
+        setNames(names, 5);
+        cost[0][1] = 3;  cost[0][2] = 8;  cost[0][4] = -4;
+        cost[1][3] = 1;  cost[1][4] = 7;
+        cost[2][1] = 4;
+        cost[3][0] = 2;  cost[3][2] = -5;
+        cost[4][3] = 6;
+    } else {
+        const char *names[] = {"Delhi", "Agra", "Jaipur", "Udaipur", "Shimla"};
+        setNames(names, 5);
+        cost[0][1] = 4;                    /* Delhi  -> Agra    */
+        cost[1][2] = -6;                   /* Agra   -> Jaipur  */
+        cost[2][0] = 1;                    /* Jaipur -> Delhi   (cycle sum = -1) */
+        cost[2][3] = 2;                    /* Jaipur -> Udaipur */
+        cost[4][0] = 3;                    /* Shimla -> Delhi   */
+    }
+
+    dataLoaded = 1;
+    resetResults();
+    printf("\nSample %d loaded.\n", c);
+    showNetwork();
+}
+
+/* Builds a random network; a ring of roads keeps every city reachable. */
+void randomNetwork(void)
+{
+    int idx[POOL_SIZE], i, j, t, count, withNeg;
+    const char *names[MAX];
+
+    count   = readInt("\nNumber of cities (2-20): ", 2, MAX);
+    withNeg = readInt("Include some negative costs (discounts)? (1 = Yes, 0 = No): ", 0, 1);
+
+    for (i = 0; i < POOL_SIZE; i++) idx[i] = i;
+    for (i = POOL_SIZE - 1; i > 0; i--) {          /* Fisher-Yates shuffle */
+        j = rand() % (i + 1);
+        t = idx[i]; idx[i] = idx[j]; idx[j] = t;
+    }
+    for (i = 0; i < count; i++) names[i] = CITY_POOL[idx[i]];
+    setNames(names, count);
+
+    for (i = 0; i < n; i++)
+        cost[i][(i + 1) % n] = (4 + rand() % 86) * 10;
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            if (i != j && cost[i][j] >= INF && rand() % 100 < 22)
+                cost[i][j] = (4 + rand() % 86) * 10;
+    if (withNeg)
+        for (i = 0; i < n; i++)
+            for (j = 0; j < n; j++)
+                if (i != j && cost[i][j] < INF && rand() % 100 < 12)
+                    cost[i][j] = -(1 + rand() % 9) * 10;
+
+    dataLoaded = 1;
+    resetResults();
+    printf("\nRandom network with %d cities generated.\n", n);
+    showNetwork();
+}
+
+/* ---------------------------- network editor ---------------------------- */
+
+void networkChanged(void)
+{
+    dataLoaded = (n > 0);
+    resetResults();
+}
+
+void addCity(void)
+{
+    int j;
+    if (n >= MAX) { printf("  At most %d cities are supported.\n", MAX); return; }
+    readCityName("  New city name: ", city[n], -1);
+    for (j = 0; j <= n; j++) { cost[n][j] = INF; cost[j][n] = INF; }
+    cost[n][n] = 0;
+    n++;
+    printf("  Added %s as city %d (no roads yet). Use 'Set / update a road' to connect it.\n",
+           city[n - 1], n);
+    networkChanged();
+}
+
+void removeCity(void)
+{
+    int r, i, j;
+    char name[NAME_LEN];
+    printCities();
+    r = readCity("  City to remove (number or name): ");
+    strcpy(name, city[r]);
+    for (i = r; i < n - 1; i++) {
+        strcpy(city[i], city[i + 1]);
+        for (j = 0; j < n; j++) cost[i][j] = cost[i + 1][j];
+    }
+    for (i = 0; i < n - 1; i++)
+        for (j = r; j < n - 1; j++) cost[i][j] = cost[i][j + 1];
+    n--;
+    printf("  Removed %s and all its roads.\n", name);
+    networkChanged();
+}
+
+void renameCity(void)
+{
+    int r;
+    char old[NAME_LEN];
+    printCities();
+    r = readCity("  City to rename (number or name): ");
+    strcpy(old, city[r]);
+    readCityName("  New name: ", city[r], r);
