@@ -678,3 +678,277 @@ void printRoute(int s, int d)
     printf("  Legs  :\n");
     for (h = 0; h < len - 1; h++) {
         total += cost[path[h]][path[h + 1]];
+printf("     %-14s -> %-14s : %8lld   (running total %lld)\n",
+               city[path[h]], city[path[h + 1]], cost[path[h]][path[h + 1]], total);
+    }
+    printf("  Roads used         : %d (stops in between: %d)\n", len - 1, len - 2);
+    printf("  Direct road        : %s\n", direct < INF ? fmtCost(direct, buf) : "none");
+    if (direct < INF && direct > best)
+        printf("  Saved vs direct    : %lld (%.1f%% cheaper)\n", direct - best,
+               direct > 0 ? 100.0 * (double)(direct - best) / (double)direct : 0.0);
+    else if (direct < INF)
+        printf("  Saved vs direct    : none (the direct road is already cheapest)\n");
+}
+
+/* --------------------------- menu operations ---------------------------- */
+
+void runAlgorithm(void)
+{
+    int mode, showStage[MAX] = {0}, count, ok;
+    char buf[LINE_LEN], *tok, *end;
+    long v;
+
+    printf("\nTrace options:\n");
+    printf("  1. No intermediate matrices\n");
+    printf("  2. Show matrix after every stage k\n");
+    printf("  3. Show matrix after selected stages only\n");
+    printf("  4. Step by step: explain every improvement, pause after each stage\n");
+    mode = readInt("Choose (1-4): ", 1, 4) - 1;
+
+    if (mode == 2) {
+        printCities();
+        while (1) {
+            printf("Enter stage numbers to display (1-%d, space separated): ", n);
+            readLine(buf, sizeof buf);
+            memset(showStage, 0, sizeof showStage);
+            count = 0;
+            ok = 1;
+            for (tok = strtok(buf, " \t,"); tok != NULL; tok = strtok(NULL, " \t,")) {
+                v = strtol(tok, &end, 10);
+                if (*end != '\0' || v < 1 || v > n) { ok = 0; break; }
+                showStage[v - 1] = 1;
+                count++;
+            }
+            if (ok && count > 0) break;
+            printf("  Invalid list.\n");
+        }
+    }
+
+    floydWarshall(mode, showStage);
+
+    printf("\nFloyd-Warshall completed: %d stages, %lld relaxation checks, %lld updates.\n",
+           n, relaxTests, updates);
+    printFinalMatrix();
+}
+
+void showRoute(int s, int d)
+{
+    printf("\n  %s -> %s\n", city[s], city[d]);
+    if (isPairAffected(s, d)) {
+        printf("  Cost  : -INFINITY (route can loop through a negative cycle).\n");
+        printf("  No finite cheapest route exists.\n");
+    } else if (dist[s][d] >= INF) {
+        printf("  Cost  : UNREACHABLE (no route from %s to %s).\n", city[s], city[d]);
+        explainUnreachable(s, d);
+    } else if (s == d) {
+        printf("  Cost  : 0 (source and destination are the same city).\n");
+    } else {
+        printf("  Cheapest travel cost: %lld\n", dist[s][d]);
+        printRoute(s, d);
+    }
+}
+
+/* Cheapest cost from one city to every other city. */
+void routesFromCity(int s)
+{
+    int j;
+    char buf[32];
+    printf("\n  Cheapest costs from %s:\n", city[s]);
+    for (j = 0; j < n; j++) {
+        if (j == s) continue;
+        if (isPairAffected(s, j))     printf("    -> %-14s : -INF (negative cycle)\n", city[j]);
+        else if (dist[s][j] >= INF)   printf("    -> %-14s : unreachable\n", city[j]);
+        else                          printf("    -> %-14s : %s\n", city[j], fmtCost(dist[s][j], buf));
+    }
+}
+
+void routePlanner(void)
+{
+    int c, s, d;
+    while (1) {
+        printf("\n---------------- Route planner ----------------\n");
+        printf("  1. Cheapest cost and route between two cities\n");
+        printf("  2. Cheapest costs from one city to all others\n");
+        printf("  0. Back to main menu\n");
+        c = readInt("Choose: ", 0, 2);
+        if (c == 0) return;
+        printCities();
+        if (c == 1) {
+            s = readCity("Source city (number or name)      : ");
+            d = readCity("Destination city (number or name) : ");
+            showRoute(s, d);
+        } else {
+            routesFromCity(readCity("Source city (number or name): "));
+        }
+    }
+}
+
+void listUnreachable(void)
+{
+    int i, j, count = 0, noOut, noIn;
+    printf("\nUnreachable ordered pairs (source -> destination):\n");
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            if (i != j && dist[i][j] >= INF) {
+                printf("  %-14s -> %s\n", city[i], city[j]);
+                count++;
+            }
+    if (count == 0) {
+        printf("  None. Every city can reach every other city.\n");
+        return;
+    }
+    printf("Total unreachable pairs: %d of %d\n", count, n * (n - 1));
+
+    printf("\nCities with no outgoing road :");
+    noOut = 0;
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n && (j == i || cost[i][j] >= INF); j++) ;
+        if (j == n) { printf(" %s", city[i]); noOut++; }
+    }
+    printf("%s\n", noOut ? "" : " none");
+    printf("Cities with no incoming road :");
+    noIn = 0;
+    for (j = 0; j < n; j++) {
+        for (i = 0; i < n && (i == j || cost[i][j] >= INF); i++) ;
+        if (i == n) { printf(" %s", city[j]); noIn++; }
+    }
+    printf("%s\n", noIn ? "" : " none");
+}
+
+void negativeCycleReport(void)
+{
+    int i, j, count = 0;
+    printf("\nDiagonal check (dist[i][i] after completion):\n");
+    for (i = 0; i < n; i++) {
+        printf("  %-14s : ", city[i]);
+        if (dist[i][i] < 0) printf("%lld  <-- lies on a negative cycle\n", dist[i][i]);
+        else                printf("0\n");
+    }
+    if (!hasNegCycle) {
+        printf("\nNo negative cycle detected. All finite distances are valid.\n");
+        return;
+    }
+    printf("\n*** NEGATIVE CYCLE DETECTED ***\n");
+    printf("Pairs whose cheapest cost is -INFINITY (undefined):\n");
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            if (isPairAffected(i, j)) {
+                printf("  %-14s -> %s\n", city[i], city[j]);
+                count++;
+            }
+    printf("Total affected pairs: %d\n", count);
+}
+
+void analysisSummary(void)
+{
+    int i, j, k, edges, negEdges, unreach = 0, cycleCities = 0, maxUpd = 1, w;
+    edges = countRoads(&negEdges);
+    for (i = 0; i < n; i++) {
+        if (dist[i][i] < 0) cycleCities++;
+        for (j = 0; j < n; j++)
+            if (i != j && dist[i][j] >= INF) unreach++;
+    }
+    for (k = 0; k < n; k++)
+        if (stageUpd[k] > maxUpd) maxUpd = stageUpd[k];
+
+    printf("\n================ Analysis & Insights ================\n");
+    printf("Number of cities (n)            : %d\n", n);
+    printf("Direct roads (edges)            : %d (negative: %d)\n", edges, negEdges);
+    printf("Stages (intermediate cities k)  : %d\n", n);
+    printf("Max i-k-j combinations (n^3)    : %d\n", n * n * n);
+    printf("Relaxation checks performed     : %lld (%.1f%% of n^3; pairs that\n"
+           "                                  cannot reach k are skipped)\n",
+           relaxTests, 100.0 * (double)relaxTests / (double)(n * n * n));
+    printf("Successful updates              : %lld\n", updates);
+    printf("Unreachable pairs               : %d of %d\n", unreach, n * (n - 1));
+    printf("Negative cycle                  : %s", hasNegCycle ? "YES" : "NO");
+    if (hasNegCycle) printf(" (%d cities on a cycle)", cycleCities);
+    printf("\n");
+
+    printf("\nImprovements per stage (routes made cheaper via city k):\n");
+    for (k = 0; k < n; k++) {
+        printf("  k=%-2d %-12.12s |", k + 1, city[k]);
+        w = stageUpd[k] * BAR_WIDTH / maxUpd;
+        for (i = 0; i < w; i++) putchar('#');
+        printf("%*s %d\n", BAR_WIDTH - w, "", stageUpd[k]);
+    }
+
+    printf("\nHow it works:\n");
+    printf("  Recurrence : D(k)[i][j] = min( D(k-1)[i][j], D(k-1)[i][k] + D(k-1)[k][j] )\n");
+    printf("  Subproblem : D(k)[i][j] is the cheapest cost from i to j using only\n"
+           "               cities 1..k as stops in between.\n");
+    printf("  Base case  : D(0) is the direct road matrix (0 on diagonal, INF if no road).\n");
+    printf("  Routes     : next[i][j] stores the first city to visit; following it\n"
+           "               rebuilds the full route.\n");
+    printf("  Neg. cycle : any D[i][i] < 0 at the end means costs fall without limit.\n");
+    printf("  Time       : Theta(n^3)     Space : Theta(n^2)\n");
+    printf("=====================================================\n");
+}
+
+/* --------------------------------- main --------------------------------- */
+
+void showMenu(void)
+{
+    printf("\n=====================================================\n");
+    printf("   FAREGRID - INTERCITY ALL-PAIRS TRAVEL COST ANALYZER\n");
+    printf("              (Floyd-Warshall Algorithm)\n");
+    printf("=====================================================\n");
+    printf("  Network%s\n", dataLoaded ? "" : "  (no network loaded)");
+    printf("   1. Enter cities and cost matrix\n");
+    printf("   2. Load sample dataset\n");
+    printf("   3. Generate random network\n");
+    printf("   4. Edit network (cities / roads)\n");
+    printf("   5. Display cities and cost matrix\n");
+    printf("  Algorithm%s\n", processed ? "" : "  (not run yet)");
+    printf("   6. Run Floyd-Warshall algorithm\n");
+    printf("  Results\n");
+    printf("   7. Display final distance matrix\n");
+    printf("   8. Display next-hop (route) matrix\n");
+    printf("   9. Route planner (cheapest cost and route)\n");
+    printf("  10. List unreachable city pairs\n");
+    printf("  11. Negative cycle report\n");
+    printf("  12. Analysis & insights\n");
+    printf("   0. Exit\n");
+    printf("-----------------------------------------------------\n");
+}
+
+int main(void)
+{
+    int choice;
+
+    srand((unsigned)time(NULL));
+
+    while (1) {
+        showMenu();
+        choice = readInt("Enter your choice: ", 0, 12);
+
+        if (choice == 0) {
+            printf("\nThank you for using FareGrid. Exiting.\n");
+            break;
+        }
+        if (choice >= 5 && !dataLoaded) {
+            printf("\nNo network available. Use option 1, 2, 3 or 4 first.\n");
+            continue;
+        }
+        if (choice >= 7 && !processed) {
+            printf("\nRun the Floyd-Warshall algorithm (option 6) first.\n");
+            continue;
+        }
+
+        switch (choice) {
+        case 1:  readGraph();             break;
+        case 2:  loadSample();            break;
+        case 3:  randomNetwork();         break;
+        case 4:  editNetwork();           break;
+        case 5:  showNetwork();           break;
+        case 6:  runAlgorithm();          break;
+        case 7:  printFinalMatrix();      break;
+        case 8:  printNextMatrix();       break;
+        case 9:  routePlanner();          break;
+        case 10: listUnreachable();       break;
+        case 11: negativeCycleReport();   break;
+        case 12: analysisSummary();       break;
+        }
+    }
+    return 0;
+}
