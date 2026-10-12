@@ -477,3 +477,204 @@ void renameCity(void)
     r = readCity("  City to rename (number or name): ");
     strcpy(old, city[r]);
     readCityName("  New name: ", city[r], r);
+readCityName("  New name: ", city[r], r);
+    printf("  Renamed %s to %s.\n", old, city[r]);
+    if (processed) printf("  (Results are unchanged; only the name was updated.)\n");
+}
+
+void setRoad(int removing)
+{
+    int a, b;
+    long long v;
+    char o[32], w[32];
+    printCities();
+    a = readCity("  From city (number or name): ");
+    b = readCity("  To city   (number or name): ");
+    if (a == b) { printf("  A city's cost to itself is always 0.\n"); return; }
+    v = removing ? INF : readCost("  Road cost (integer, or INF for no road): ");
+    printf("  %s -> %s : %s -> %s\n", city[a], city[b], fmtCost(cost[a][b], o), fmtCost(v, w));
+    cost[a][b] = v;
+    networkChanged();
+}
+
+void editNetwork(void)
+{
+    int c;
+    while (1) {
+        printf("\n---------------- Edit network (%d cities) ----------------\n", n);
+        printf("  1. Add a city\n");
+        printf("  2. Remove a city\n");
+        printf("  3. Rename a city\n");
+        printf("  4. Set / update a road cost\n");
+        printf("  5. Remove a road\n");
+        printf("  6. Show current network\n");
+        printf("  0. Back to main menu\n");
+        c = readInt("Choose: ", 0, 6);
+        if (c == 0) return;
+        if (c != 1 && n == 0) { printf("  The network is empty. Add a city first.\n"); continue; }
+        switch (c) {
+        case 1: addCity();      break;
+        case 2: removeCity();   break;
+        case 3: renameCity();   break;
+        case 4: setRoad(0);     break;
+        case 5: setRoad(1);     break;
+        case 6: showNetwork();  break;
+        }
+    }
+}
+
+/* ------------------------- Floyd-Warshall core -------------------------- */
+
+void printStage(int k)
+{
+    char title[128];
+    if (k < 0) {
+        snprintf(title, sizeof title, "D(0): initial matrix (no intermediate city)");
+        printMatrix(dist, title, NULL);
+    } else {
+        snprintf(title, sizeof title, "D(%d): after allowing %s as intermediate city (%d improved)",
+                 k + 1, city[k], stageUpd[k]);
+        printMatrix(dist, title, changed);
+    }
+}
+
+/*
+ * traceMode: 0 = no trace, 1 = print every stage, 2 = print selected stages,
+ *            3 = step by step (explain every improvement, pause per stage)
+ * showStage[k] is used only when traceMode == 2.
+ */
+void floydWarshall(int traceMode, const int showStage[])
+{
+    int i, j, k, explain, skip = 0;
+    long long through;
+    char a[32], b[32], c[32], d[32], buf[LINE_LEN];
+
+    /* Step 1 & 2: initialise dist and next matrices from the cost matrix */
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            dist[i][j] = cost[i][j];
+            nxt[i][j]  = (cost[i][j] < INF) ? j : -1;
+        }
+        dist[i][i] = 0;
+        nxt[i][i]  = i;
+    }
+    updates = relaxTests = 0;
+
+    if (traceMode != 0) printStage(-1);
+
+    /* Step 3: consider each city k as an allowed intermediate point */
+    for (k = 0; k < n; k++) {
+        memset(changed, 0, sizeof changed);
+        stageUpd[k] = 0;
+        explain = (traceMode == 3 && !skip);
+        if (explain) {
+            printf("\n=========== Stage %d of %d : via %s ===========\n", k + 1, n, city[k]);
+            printf("Rule: D[i][j] = min( D[i][j] , D[i][%s] + D[%s][j] )\n", city[k], city[k]);
+        }
+
+        for (i = 0; i < n; i++) {
+            if (dist[i][k] >= INF) continue;          /* i cannot reach k */
+            for (j = 0; j < n; j++) {
+                if (dist[k][j] >= INF) continue;      /* k cannot reach j */
+                relaxTests++;
+                through = dist[i][k] + dist[k][j];
+                if (through < NEG_LIMIT) through = NEG_LIMIT;
+                if (through < dist[i][j]) {
+                    stageUpd[k]++;
+                    if (explain)
+                        printf("  %3d. %s -> %s : min( %s , %s + %s ) = %s\n",
+                               stageUpd[k], city[i], city[j], fmtCost(dist[i][j], a),
+                               fmtTerm(dist[i][k], b), fmtTerm(dist[k][j], c),
+                               fmtCost(through, d));
+                    dist[i][j] = through;
+                    nxt[i][j]  = nxt[i][k];
+                    changed[i][j] = 1;
+                    updates++;
+                }
+            }
+        }
+
+        /* Step 4: display matrices after chosen stages */
+        if (explain) {
+            if (stageUpd[k] == 0) printf("  No route improves via %s.\n", city[k]);
+            printStage(k);
+            if (k < n - 1) {
+                printf("Press Enter for the next stage, or type s + Enter to skip to the end: ");
+                readLine(buf, sizeof buf);
+                if (buf[0] == 's' || buf[0] == 'S') skip = 1;
+            }
+        } else if (traceMode == 1 || (traceMode == 2 && showStage[k])) {
+            printStage(k);
+        }
+    }
+
+    /* Step 6: negative diagonal entries indicate a negative cycle */
+    hasNegCycle = 0;
+    for (i = 0; i < n; i++)
+        if (dist[i][i] < 0) hasNegCycle = 1;
+
+    processed = 1;
+}
+
+/* A pair's cost is undefined (-infinity) if its path can pass a negative cycle. */
+int isPairAffected(int i, int j)
+{
+    int k;
+    for (k = 0; k < n; k++)
+        if (dist[k][k] < 0 && dist[i][k] < INF && dist[k][j] < INF)
+            return 1;
+    return 0;
+}
+
+/* Final matrix, with pairs affected by a negative cycle shown as -INF. */
+void printFinalMatrix(void)
+{
+    long long shown[MAX][MAX];
+    int i, j;
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            shown[i][j] = isPairAffected(i, j) ? NEG_LIMIT : dist[i][j];
+    printMatrix(shown, "Final all-pairs cheapest cost matrix D(n):", NULL);
+    if (hasNegCycle)
+        printf("WARNING: negative cycle present. -INF pairs have no cheapest cost (option 11).\n");
+}
+
+/* Explains why s cannot reach d (roads are one-way). */
+void explainUnreachable(int s, int d)
+{
+    int i, outS = 0, inD = 0;
+    for (i = 0; i < n; i++) {
+        if (i != s && cost[s][i] < INF) outS++;
+        if (i != d && cost[i][d] < INF) inD++;
+    }
+    printf("  Reason: roads are one-way (row city -> column city), and ");
+    if (outS == 0)     printf("%s has no outgoing road.\n", city[s]);
+    else if (inD == 0) printf("%s has no incoming road.\n", city[d]);
+    else               printf("none of the cities reachable from %s has a road into %s.\n",
+                              city[s], city[d]);
+}
+
+/* Reconstructs and prints the cheapest route from s to d using nxt[][]. */
+void printRoute(int s, int d)
+{
+    int path[MAX + 1], len = 0, cur = s, h;
+    long long total = 0, direct = cost[s][d], best = dist[s][d];
+    char buf[32];
+
+    path[len++] = cur;
+    while (cur != d) {
+        cur = nxt[cur][d];
+        if (cur == -1 || len > n) {
+            printf("  Route could not be reconstructed.\n");
+            return;
+        }
+        path[len++] = cur;
+    }
+
+    printf("  Route : ");
+    for (h = 0; h < len; h++)
+        printf("%s%s", city[path[h]], (h < len - 1) ? " -> " : "\n");
+
+    printf("  Legs  :\n");
+    for (h = 0; h < len - 1; h++) {
+        total += cost[path[h]][path[h + 1]];
